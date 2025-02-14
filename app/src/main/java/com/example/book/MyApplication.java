@@ -37,6 +37,7 @@ import java.io.FileOutputStream;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Locale;
+import java.util.UUID;
 
 
 public class MyApplication extends Application {
@@ -339,16 +340,15 @@ public class MyApplication extends Application {
     private static void saveDownloadedBook(Context context, ProgressDialog progressDialog, byte[] bytes, String nameWithExtension, String bookId) {
         Log.d(TAG_DOWNLOAD, "onSuccess: Lưu sách đã tải xuống");
         try {
-            File downloadsFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+
+            File downloadsFolder = new File(Environment.getExternalStorageDirectory() + "/Download");
             downloadsFolder.mkdir();
+            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: dowloadBookFile: "+downloadsFolder);
 
-            String filePath = downloadsFolder.getPath() + "/" + nameWithExtension;
-            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: "+filePath);
-
-            FileOutputStream outputStream = new FileOutputStream(filePath);
+            FileOutputStream outputStream = new FileOutputStream(downloadsFolder);
             outputStream.write(bytes);
             outputStream.close();
-
+            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: outputStream: "+outputStream);
             Toast.makeText(context, "Lưu vào thư mục", Toast.LENGTH_SHORT).show();
             Log.d(TAG_DOWNLOAD, "saveDownloadedBook: Lưu vào thư mục");
             progressDialog.dismiss();

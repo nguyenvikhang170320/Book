@@ -83,7 +83,7 @@
     <string name="sdt">0939570046</string>
     <string name="xulyreport">Xử lý report</string>
     <string name="viewreport">Thông tin báo cáo sách</string>
-    <string name="mp3">Audio</string>
+    <string name="mp3">Audio Mp3</string>
     <string name="noi_dung_bao_cao">Nội dung báo cáo</string>
     <string name="file_text_to_speech">Lưu ý: Ở đây là tất cả file đọc văn bản bằng giọng nói, xin lưu ý file ở đây dạng mp3, nên có 1 số điện thoại cũ nó sẽ không tương thích, nếu chưa thấy file có thể mở thư mục Downloads/AppBook trong bộ nhớ điện thoại bạn nhá. xin cảm ơn.</string>
     <string name="no_file">"Không có tập tin "</string>
