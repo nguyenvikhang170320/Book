@@ -51,8 +51,22 @@ import com.google.firebase.storage.StorageTask;
 import com.squareup.picasso.Picasso;
 
 
+import org.cloudinary.json.JSONException;
+import org.cloudinary.json.JSONObject;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 
 public class ProfileEditActivity extends AppCompatActivity {
@@ -315,51 +329,157 @@ public class ProfileEditActivity extends AppCompatActivity {
         Log.d(TAG, "uploadNameDB: Cập nhật tên: "+name+ " thành công");
         reference.updateChildren(hashMap);
     }
-
     private void updateAnh() {
-        if (image_uri != null){
-            Log.d(TAG, "updateAnh: Đã vô tới update ảnh");
-            //name and path of image
-            String filePathAndName = "profile_images/" + "" + firebaseUser.getUid();
-            //upload image
-            StorageReference storageReference = FirebaseStorage.getInstance().getReference(filePathAndName);
-            storageReference.putFile(image_uri)
-                    .addOnSuccessListener(taskSnapshot -> {
-                        //get url of uploaded image
-                        Task<Uri> uriTask = taskSnapshot.getStorage().getDownloadUrl();
-                        while (!uriTask.isSuccessful()) ;
-                        Uri downloadImageUri = uriTask.getResult();
+        if (image_uri == null) {
+            Toast.makeText(this, "Bạn chưa chọn PDF!", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-                        if (uriTask.isSuccessful()) {
+        Log.d(TAG,"uploadPdfToStorage: Upload PDF storage....");
 
-                            //setup data to save
-                            HashMap<String, Object> hashMap = new HashMap<>();
-                            hashMap.put("uid", "" + firebaseUser.getUid());
-                            hashMap.put("profileimage", "" + downloadImageUri);//url of uploaded image
+        //show progress
+        progressDialog.setMessage("Đang upload ảnh đại diện");
+        progressDialog.show();
 
-                            //save to db
-                            DatabaseReference ref = FirebaseDatabase.getInstance().getReference("Users");
-                            ref.child(firebaseUser.getUid()).updateChildren(hashMap)
-                                    .addOnSuccessListener(aVoid -> {
-                                        //db updated
-                                        progressDialog.dismiss();
-                                        Log.d(TAG, "saverFirebaseData: Upload thêm ảnh thành công");
-                                        Toast.makeText(ProfileEditActivity.this, "Upload ảnh thành công", Toast.LENGTH_SHORT).show();
-                                        startActivity(new Intent(ProfileEditActivity.this, ProfileActivity.class));
-                                        finish();
-                                    })
-                                    .addOnFailureListener(e -> {
-                                        //failed updating db
-                                        progressDialog.dismiss();
-                                        Log.d(TAG, "updateAnh: Failed");
-                                        Toast.makeText(ProfileEditActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT).show();
-                                        finish();
-                                    });
+        //timestamp
+        long timestamp = System.currentTimeMillis();
 
-                        }
+
+        // Cloudinary API endpoint
+        String cloudName = "da95oqe1j"; // ví dụ: dxabc123
+        String uploadPreset = "ml_default2";
+        String url = "https://api.cloudinary.com/v1_1/" + cloudName + "/image/upload";
+
+        try {
+            // Chuẩn bị file từ Uri
+            InputStream inputStream = getContentResolver().openInputStream(image_uri);
+            byte[] fileBytes = new byte[inputStream.available()];
+            inputStream.read(fileBytes);
+            inputStream.close();
+
+            // Tạo request body
+            RequestBody requestBody = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", "upload_profile_book.jpg",
+                            RequestBody.create(fileBytes, MediaType.parse("image/*")))
+                    .addFormDataPart("upload_preset", uploadPreset)
+                    .build();
+
+            Request request = new Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build();
+
+            OkHttpClient client = new OkHttpClient();
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                    runOnUiThread(() -> {
+                        progressDialog.dismiss();
+                        Toast.makeText(ProfileEditActivity.this, "Upload thất bại: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                     });
+                }
+
+                @Override
+                public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                    if (response.isSuccessful()) {
+                        try {
+                            String responseBody = response.body().string();
+                            JSONObject jsonObject = new JSONObject(responseBody);
+                            imageUrl = jsonObject.getString("secure_url");
+
+                            runOnUiThread(() -> {
+                                progressDialog.dismiss();
+                                        //setup data to save
+                                        HashMap<String, Object> hashMap = new HashMap<>();
+                                        hashMap.put("uid", "" + firebaseUser.getUid());
+                                        hashMap.put("profileimage", "" + imageUrl);//url of uploaded image
+
+                                        //save to db
+                                        DatabaseReference ref = FirebaseDatabase.getInstance().getReference("Users");
+                                        ref.child(firebaseUser.getUid()).updateChildren(hashMap)
+                                                .addOnSuccessListener(aVoid -> {
+                                                    //db updated
+                                                    progressDialog.dismiss();
+                                                    Log.d(TAG, "saverFirebaseData: Upload thêm ảnh thành công");
+                                                    Toast.makeText(ProfileEditActivity.this, "Upload ảnh thành công", Toast.LENGTH_SHORT).show();
+                                                    startActivity(new Intent(ProfileEditActivity.this, ProfileActivity.class));
+                                                    finish();
+                                                })
+                                                .addOnFailureListener(e -> {
+                                                    //failed updating db
+                                                    progressDialog.dismiss();
+                                                    Log.d(TAG, "updateAnh: Failed");
+                                                    Toast.makeText(ProfileEditActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT).show();
+                                                    finish();
+                                                });
+
+                                 // quay lại MainActivity
+                            });
+                        } catch (JSONException e) {
+                            runOnUiThread(() -> {
+                                progressDialog.dismiss();
+                                Toast.makeText(ProfileEditActivity.this, "Parse JSON lỗi: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            });
+                        }
+                    } else {
+                        runOnUiThread(() -> {
+                            progressDialog.dismiss();
+                            Toast.makeText(ProfileEditActivity.this, "Lỗi: " + response.message(), Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                }
+            });
+
+        } catch (Exception e) {
+            progressDialog.dismiss();
+            Toast.makeText(this, "Lỗi đọc file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
+//    private void updateAnh() {
+//        if (image_uri != null){
+//            Log.d(TAG, "updateAnh: Đã vô tới update ảnh");
+//            //name and path of image
+//            String filePathAndName = "profile_images/" + "" + firebaseUser.getUid();
+//            //upload image
+//            StorageReference storageReference = FirebaseStorage.getInstance().getReference(filePathAndName);
+//            storageReference.putFile(image_uri)
+//                    .addOnSuccessListener(taskSnapshot -> {
+//                        //get url of uploaded image
+//                        Task<Uri> uriTask = taskSnapshot.getStorage().getDownloadUrl();
+//                        while (!uriTask.isSuccessful()) ;
+//                        Uri downloadImageUri = uriTask.getResult();
+//
+//                        if (uriTask.isSuccessful()) {
+//
+//                            //setup data to save
+//                            HashMap<String, Object> hashMap = new HashMap<>();
+//                            hashMap.put("uid", "" + firebaseUser.getUid());
+//                            hashMap.put("profileimage", "" + downloadImageUri);//url of uploaded image
+//
+//                            //save to db
+//                            DatabaseReference ref = FirebaseDatabase.getInstance().getReference("Users");
+//                            ref.child(firebaseUser.getUid()).updateChildren(hashMap)
+//                                    .addOnSuccessListener(aVoid -> {
+//                                        //db updated
+//                                        progressDialog.dismiss();
+//                                        Log.d(TAG, "saverFirebaseData: Upload thêm ảnh thành công");
+//                                        Toast.makeText(ProfileEditActivity.this, "Upload ảnh thành công", Toast.LENGTH_SHORT).show();
+//                                        startActivity(new Intent(ProfileEditActivity.this, ProfileActivity.class));
+//                                        finish();
+//                                    })
+//                                    .addOnFailureListener(e -> {
+//                                        //failed updating db
+//                                        progressDialog.dismiss();
+//                                        Log.d(TAG, "updateAnh: Failed");
+//                                        Toast.makeText(ProfileEditActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT).show();
+//                                        finish();
+//                                    });
+//
+//                        }
+//                    });
+//        }
+//    }
 
     //load tất cả những thông tin cần có của phần profile
     private void loadUserInfo() {

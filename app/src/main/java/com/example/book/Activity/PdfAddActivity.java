@@ -29,8 +29,23 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.google.firebase.storage.UploadTask;
 
+import org.cloudinary.json.JSONException;
+import org.cloudinary.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 
 public class PdfAddActivity extends AppCompatActivity {
@@ -160,46 +175,100 @@ public class PdfAddActivity extends AppCompatActivity {
     }
 
     private void uploadPdfToStorage() {
-        //step2: Upload Pdf to firebase storage
-        Log.d(TAG,"uploadPdfToStorage: Upload PDF storage....");
+        if (pdfUri == null) {
+            Toast.makeText(this, "Bạn chưa chọn PDF!", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        //show progress
-        progressDialog.setMessage("Đang upload PDF");
+        progressDialog.setMessage("Đang upload PDF...");
         progressDialog.show();
 
-        //timestamp
-        long timestamp = System.currentTimeMillis();
+        String cloudName = "da95oqe1j"; // Cloud name của bạn
+        String uploadPreset = "ml_default2"; // Upload preset unsigned bạn đã tạo
+        String url = "https://api.cloudinary.com/v1_1/" + cloudName + "/auto/upload";
+        // Dùng auto để Cloudinary tự nhận diện (pdf, image, video...)
 
-        //path of pdf in firebase storage
-        String filePathAndName = "Books/" + timestamp; //storage
-        //storage reference
-        StorageReference storageReference = FirebaseStorage.getInstance().getReference(filePathAndName);
-        storageReference.putFile(pdfUri)
-                .addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
-                    @Override
-                    public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
-                        Log.d(TAG, "onSuccess: PDF được tải lên bộ nhớ");
-                        Log.d(TAG, "onSuccess: Nhận Url PDF");
-                        Toast.makeText(PdfAddActivity.this, "PDF tải lên thành công", Toast.LENGTH_SHORT).show();
+        try {
+            // Đọc file thành byte[]
+            InputStream inputStream = getContentResolver().openInputStream(pdfUri);
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] tmp = new byte[1024];
+            int n;
+            while ((n = inputStream.read(tmp)) != -1) {
+                buffer.write(tmp, 0, n);
+            }
+            byte[] fileBytes = buffer.toByteArray();
+            inputStream.close();
 
-                        Task<Uri> uriTask = taskSnapshot.getStorage().getDownloadUrl();
-                        while (!uriTask.isSuccessful());
-                        String uploadedPdfUrl = ""+uriTask.getResult();
+            // Tạo multipart request
+            RequestBody requestBody = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", "upload.pdf",
+                            RequestBody.create(fileBytes, MediaType.parse("application/pdf")))
+                    .addFormDataPart("upload_preset", uploadPreset)
+                    .build();
 
-                        //upload to firebase
-                        uploadPdfInfoToDb(uploadedPdfUrl, timestamp);
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
+            Request request = new Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build();
+
+            OkHttpClient client = new OkHttpClient();
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                    runOnUiThread(() -> {
                         progressDialog.dismiss();
-                        Log.d(TAG, "onFailure: Tải lên PDF không thành công do "+e.getMessage());
-                        Toast.makeText(PdfAddActivity.this, "Tải lên PDF không thành công do "+e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
+                        Toast.makeText(PdfAddActivity.this,
+                                "Upload thất bại: " + e.getMessage(),
+                                Toast.LENGTH_SHORT).show();
+                    });
+                }
 
+                @Override
+                public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                    String responseBody = response.body().string();
+                    Log.d("CloudinaryUpload", "Response: " + responseBody);
+
+                    if (response.isSuccessful()) {
+                        try {
+                            JSONObject json = new JSONObject(responseBody);
+                            String uploadedUrl = json.getString("secure_url");
+
+                            runOnUiThread(() -> {
+                                progressDialog.dismiss();
+                                Toast.makeText(PdfAddActivity.this,
+                                        "Upload thành công!",
+                                        Toast.LENGTH_SHORT).show();
+
+                                // TODO: Gọi hàm lưu DB
+                                uploadPdfInfoToDb(uploadedUrl, System.currentTimeMillis());
+                            });
+                        } catch (JSONException e) {
+                            runOnUiThread(() -> {
+                                progressDialog.dismiss();
+                                Toast.makeText(PdfAddActivity.this,
+                                        "Parse JSON lỗi: " + e.getMessage(),
+                                        Toast.LENGTH_SHORT).show();
+                            });
+                        }
+                    } else {
+                        runOnUiThread(() -> {
+                            progressDialog.dismiss();
+                            Toast.makeText(PdfAddActivity.this,
+                                    "Upload lỗi: " + response.code() + " - " + responseBody,
+                                    Toast.LENGTH_LONG).show();
+                        });
+                    }
+                }
+            });
+
+        } catch (Exception e) {
+            progressDialog.dismiss();
+            Toast.makeText(this, "Lỗi đọc file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
+
 
     private void uploadPdfInfoToDb(String uploadedPdfUrl, long timestamp) {
         //step3: Upload Pdf to firebase database

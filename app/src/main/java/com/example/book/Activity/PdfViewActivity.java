@@ -3,7 +3,9 @@ package com.example.book.Activity;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -23,6 +25,12 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class PdfViewActivity extends AppCompatActivity {
 
@@ -77,56 +85,67 @@ public class PdfViewActivity extends AppCompatActivity {
                 });
     }
 
+    // Load PDF từ URL bất kỳ (Cloudinary, server custom, v.v)
+    @SuppressLint("StaticFieldLeak")
     private void loadBookFromUrl(String pdfUrl) {
-        Log.d(TAG, "loadBookFromUrl: File PDF bộ nhớ storage");
-        StorageReference reference = FirebaseStorage.getInstance().getReferenceFromUrl(pdfUrl);
-        reference.getBytes(Constants.MAX_BYTES_PDF)
-                .addOnSuccessListener(new OnSuccessListener<byte[]>() {
-                    @Override
-                    public void onSuccess(byte[] bytes) {
-                        //load pdf using bytes
-                        binding.pdfView.fromBytes(bytes)
-                                .swipeHorizontal(false)//set false to scroll vertical, set true to swipe horizontal
-                                .onPageChange(new OnPageChangeListener() {
-                                    @Override
-                                    public void onPageChanged(int page, int pageCount) {
-                                        //set current add total pages in toolbar subtitle
-                                        int currentPage = (page + 1);//thực hiện + 1 vì trang bắt đầu từ 0
-                                        binding.toolbarSubtitleTv.setText(currentPage + "/"+pageCount);// 3/298
-                                        Log.d(TAG, "onPageChanged: "+currentPage + "/"+pageCount);
-                                        Toast.makeText(PdfViewActivity.this, "Chuyển trang: "+currentPage + "/"+pageCount, Toast.LENGTH_SHORT).show();
+        Log.d(TAG, "loadBookFromUrl: File PDF từ URL Cloudinary: " + pdfUrl);
 
-                                    }
-                                })
-                                .onError(new OnErrorListener() {
-                                    @Override
-                                    public void onError(Throwable t) {
-                                        Log.d(TAG, "onError: "+t.getMessage());
-                                        Toast.makeText(PdfViewActivity.this, ""+t.getMessage(), Toast.LENGTH_SHORT).show();
-                                    }
-                                })
-                                .onPageError(new OnPageErrorListener() {
-                                    @Override
-                                    public void onPageError(int page, Throwable t) {
-                                        Log.d(TAG, "onPageError: "+t.getMessage());
-                                        Toast.makeText(PdfViewActivity.this, "Trang bị lỗi"+page+" "+t.getMessage(), Toast.LENGTH_SHORT).show();
-                                    }
-                                })
-                                .load();
-                        binding.progressBar.setVisibility(View.GONE);
+        new AsyncTask<String, Void, byte[]>() {
+            @Override
+            protected void onPreExecute() {
+                super.onPreExecute();
+                binding.progressBar.setVisibility(View.VISIBLE);
+            }
 
+            @Override
+            protected byte[] doInBackground(String... strings) {
+                try {
+                    URL url = new URL(strings[0]);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    connection.connect();
 
-
+                    InputStream inputStream = new BufferedInputStream(connection.getInputStream());
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    byte[] data = new byte[1024];
+                    int n;
+                    while ((n = inputStream.read(data)) != -1) {
+                        buffer.write(data, 0, n);
                     }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        //failed
-                        Log.d(TAG, "onFailure: "+e.getMessage());
-                        Toast.makeText(PdfViewActivity.this, "File PDF bị lỗi: "+e.getMessage(), Toast.LENGTH_SHORT).show();
-                        binding.progressBar.setVisibility(View.GONE);
-                    }
-                });
+                    inputStream.close();
+                    return buffer.toByteArray();
+                } catch (Exception e) {
+                    Log.e(TAG, "doInBackground: Lỗi tải PDF -> " + e.getMessage());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(byte[] bytes) {
+                super.onPostExecute(bytes);
+                binding.progressBar.setVisibility(View.GONE);
+
+                if (bytes != null) {
+                    binding.pdfView.fromBytes(bytes)
+                            .swipeHorizontal(false) // dọc
+                            .onPageChange((page, pageCount) -> {
+                                int currentPage = page + 1;
+                                binding.toolbarSubtitleTv.setText(currentPage + "/" + pageCount);
+                                Log.d(TAG, "onPageChanged: " + currentPage + "/" + pageCount);
+                            })
+                            .onError(t -> {
+                                Log.e(TAG, "onError: " + t.getMessage());
+                                Toast.makeText(PdfViewActivity.this, "Lỗi PDF: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                            })
+                            .onPageError((page, t) -> {
+                                Log.e(TAG, "onPageError: " + t.getMessage());
+                                Toast.makeText(PdfViewActivity.this, "Trang " + page + " lỗi: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                            })
+                            .load();
+                } else {
+                    Toast.makeText(PdfViewActivity.this, "Không tải được PDF", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }.execute(pdfUrl);
     }
+
 }

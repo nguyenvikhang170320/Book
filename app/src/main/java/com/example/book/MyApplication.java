@@ -3,10 +3,16 @@ package com.example.book;
 
 import static com.example.book.Constants.MAX_BYTES_PDF;
 
+import android.app.Activity;
 import android.app.Application;
 import android.app.ProgressDialog;
+import android.content.ContentValues;
 import android.content.Context;
+import android.net.Uri;
+import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.text.format.DateFormat;
 import android.util.Log;
 import android.view.View;
@@ -32,12 +38,25 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageMetadata;
 import com.google.firebase.storage.StorageReference;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.UUID;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 
 public class MyApplication extends Application {
@@ -141,105 +160,116 @@ public class MyApplication extends Application {
 
     //size pdf
     public static void loadPdfSize(String pdfUrl, String pdfTitle, TextView sizeTv) {
-        //using url we can get file and its metadata from firebase storage
-        String TAG = "PDF_SIZE_TAG";
+        String TAG = "PDF_SIZE_CLOUDINARY";
 
-        StorageReference ref = FirebaseStorage.getInstance().getReferenceFromUrl(pdfUrl);
-        ref.getMetadata()
-                .addOnSuccessListener(new OnSuccessListener<StorageMetadata>() {
-                    @Override
-                    public void onSuccess(StorageMetadata storageMetadata) {
-                        //get size in bytes
-                        double bytes = storageMetadata.getSizeBytes();
-                        Log.d(TAG, "onSuccess: "+pdfTitle +" "+bytes);
+        OkHttpClient client = new OkHttpClient();
+        Request request = new Request.Builder()
+                .url(pdfUrl)
+                .head() // chỉ lấy header, không tải file
+                .build();
 
-                        //convert bytes to KB, MB
-                        double kb = bytes/1024;
-                        double mb = kb/1024;
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                Log.e(TAG, "Lỗi khi lấy size: " + e.getMessage());
+            }
 
-                        if (mb>=1){
-                            sizeTv.setText(String.format("%.2f", mb)+" MB");
-                        }
-                        else if (kb>=1){
-                            sizeTv.setText(String.format("%.2f", kb)+" KB");
-                        }
-                        else {
-                            sizeTv.setText(String.format("%.2f", bytes)+" bytes");
-                        }
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) {
+                if (!response.isSuccessful()) {
+                    Log.e(TAG, "Phản hồi lỗi: " + response.code());
+                    return;
+                }
+
+                long bytes = 0;
+                String contentLength = response.header("Content-Length");
+                if (contentLength != null) {
+                    try {
+                        bytes = Long.parseLong(contentLength);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "Parse Content-Length lỗi: " + e.getMessage());
                     }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        //failed getting metadata
-                        Log.d(TAG, "onFailure: "+e.getMessage());
-//                        Toast.makeText(context, ""+e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+
+                long finalBytes = bytes;
+                ((Activity) sizeTv.getContext()).runOnUiThread(() -> {
+                    double kb = finalBytes / 1024.0;
+                    double mb = kb / 1024.0;
+
+                    if (mb >= 1) {
+                        sizeTv.setText(String.format("%.2f MB", mb));
+                    } else if (kb >= 1) {
+                        sizeTv.setText(String.format("%.2f KB", kb));
+                    } else {
+                        sizeTv.setText(finalBytes + " bytes");
                     }
+
+                    Log.d(TAG, "onSuccess: " + pdfTitle + " " + finalBytes + " bytes");
                 });
+            }
+        });
     }
+
 
     //load url pdf
-    public static void loadPdfFromUrlSinglePage(String pdfUrl, String pdfTitle, PDFView pdfView, ProgressBar progressBar, TextView pagesTv) {
-        //using url we can get file and its metadata from firebase storage
-        String TAG = "PDF_LOAD_SINGLE_TAG";
+    public static void loadPdfFromUrlSinglePage(String pdfUrl, String pdfTitle,
+                                             PDFView pdfView, ProgressBar progressBar, TextView pagesTv) {
+        String TAG = "PDF_LOAD_CLOUDINARY";
 
+        OkHttpClient client = new OkHttpClient();
+        Request request = new Request.Builder().url(pdfUrl).build();
 
-        StorageReference ref = FirebaseStorage.getInstance().getReferenceFromUrl(pdfUrl);
-        //Liên quan đến class Constants
-        ref.getBytes(MAX_BYTES_PDF)
-                .addOnSuccessListener(new OnSuccessListener<byte[]>() {
-                    @Override
-                    public void onSuccess(byte[] bytes) {
-                        Log.d(TAG, "onSuccess: "+pdfTitle+" lấy tệp thành công");
-
-                        //set pdfview
-                       pdfView.fromBytes(bytes)
-                                .pages(0)
-                                .spacing(0)
-                                .swipeHorizontal(false)
-                                .enableSwipe(false)
-                                .onError(new OnErrorListener() {
-                                    @Override
-                                    public void onError(Throwable t) {
-                                        //hide progress
-                                        progressBar.setVisibility(View.INVISIBLE);
-                                        Log.d(TAG, "onError: "+t.getMessage());
-                                    }
-                                })
-                                .onPageError(new OnPageErrorListener() {
-                                    @Override
-                                    public void onPageError(int page, Throwable t) {
-                                        //hide progress
-                                        progressBar.setVisibility(View.INVISIBLE);
-                                        Log.d(TAG, "onPageError: "+t.getMessage());
-                                    }
-                                })
-                                .onLoad(new OnLoadCompleteListener() {
-                                    @Override
-                                    public void loadComplete(int nbPages) {
-                                        //pdf loaded
-                                        //hide progress
-                                        progressBar.setVisibility(View.INVISIBLE);
-                                        Log.d(TAG, "loadComplete: Đang load pdf");
-
-                                        //nếu tham số pageTv không phải là null thì hãy đặt số trang
-                                        if (pagesTv != null){
-                                            pagesTv.setText(""+nbPages);
-                                        }
-                                    }
-                                })
-                                .load();
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        //hide progress
-                        progressBar.setVisibility(View.INVISIBLE);
-                        Log.d(TAG, "onFailure: lấy tệp thất bại tại url là"+e.getMessage());
-                    }
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                ((Activity) pdfView.getContext()).runOnUiThread(() -> {
+                    progressBar.setVisibility(View.INVISIBLE);
+                    Toast.makeText(pdfView.getContext(), "Tải PDF thất bại: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
+                Log.e(TAG, "Download thất bại: " + e.getMessage());
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                if (!response.isSuccessful()) {
+                    ((Activity) pdfView.getContext()).runOnUiThread(() -> {
+                        progressBar.setVisibility(View.INVISIBLE);
+                        Toast.makeText(pdfView.getContext(), "Lỗi khi tải PDF (code " + response.code() + ")", Toast.LENGTH_SHORT).show();
+                    });
+                    Log.e(TAG, "Phản hồi lỗi: " + response.code());
+                    return;
+                }
+
+                byte[] bytes = response.body().bytes();
+
+                ((Activity) pdfView.getContext()).runOnUiThread(() -> {
+                    pdfView.fromBytes(bytes)
+                            .pages(0) // chỉ trang đầu
+                            .spacing(0)
+                            .swipeHorizontal(false)
+                            .enableSwipe(false)
+                            .onError(t -> {
+                                progressBar.setVisibility(View.INVISIBLE);
+                                Log.e(TAG, "onError: " + t.getMessage());
+                            })
+                            .onPageError((page, t) -> {
+                                progressBar.setVisibility(View.INVISIBLE);
+                                Log.e(TAG, "onPageError: " + t.getMessage());
+                            })
+                            .onLoad(nbPages -> {
+                                progressBar.setVisibility(View.INVISIBLE);
+                                Log.d(TAG, "PDF load thành công từ Cloudinary");
+
+                                if (pagesTv != null) {
+                                    pagesTv.setText("" + nbPages);
+                                }
+                            })
+                            .load();
+                });
+            }
+        });
     }
+
 
     //hiển thị danh mục sách
     public static void loadCategory(String categoryId, TextView categoryTv) {
@@ -298,69 +328,100 @@ public class MyApplication extends Application {
     }
 
 
-    //download
-    public static  void downloadBook(Context context, String bookId, String bookTitle, String bookUrl){
-        Log.d(TAG_DOWNLOAD, "downloadBook: tải xuống sách...");
+
+    // Download PDF từ Cloudinary URL hoặc bất kỳ URL nào
+    public static void downloadBook(Context context, String bookId, String bookTitle, String bookUrl) {
+        Log.d(TAG_DOWNLOAD, "downloadBookFromUrl: tải xuống sách từ URL: " + bookUrl);
 
         String nameWithExtension = bookTitle + ".pdf";
-        Log.d(TAG_DOWNLOAD, "downloadBook: tên sách: "+nameWithExtension);
 
-        //progress dialog
         ProgressDialog progressDialog = new ProgressDialog(context);
-        progressDialog.setTitle("Vui lòng đợi trong giây lát");
-        progressDialog.setMessage("Tải xuống "+ nameWithExtension +"..."); // tải xuống ABC.pdf
+        progressDialog.setTitle("Vui lòng đợi");
+        progressDialog.setMessage("Đang tải xuống " + nameWithExtension + "...");
         progressDialog.setCanceledOnTouchOutside(false);
         progressDialog.show();
 
-        //download from firebase storage using url
-        StorageReference storageReference = FirebaseStorage.getInstance().getReferenceFromUrl(bookUrl);
-        storageReference.getBytes(MAX_BYTES_PDF)
-                .addOnSuccessListener(new OnSuccessListener<byte[]>() {
-                    @Override
-                    public void onSuccess(byte[] bytes) {
-                        Log.d(TAG_DOWNLOAD, "onSuccess: Sách tải xuống");
+        new AsyncTask<String, Void, byte[]>() {
+            @Override
+            protected byte[] doInBackground(String... strings) {
+                try {
+                    URL url = new URL(strings[0]);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    connection.connect();
 
-                        progressDialog.dismiss();
-                        saveDownloadedBook(context, progressDialog, bytes, nameWithExtension, bookId);
-                        Toast.makeText(context, "Sách tải xuống thành công", Toast.LENGTH_SHORT).show();
+                    InputStream inputStream = new BufferedInputStream(connection.getInputStream());
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    byte[] data = new byte[1024];
+                    int n;
+                    while ((n = inputStream.read(data)) != -1) {
+                        buffer.write(data, 0, n);
                     }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        Log.d(TAG_DOWNLOAD, "onFailure: Lỗi!!Không tải xuống được do: "+e.getMessage());
-                        progressDialog.dismiss();
-                        Toast.makeText(context, "Lỗi!!Không tải xuống được do: "+e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
+                    inputStream.close();
+                    return buffer.toByteArray();
+                } catch (Exception e) {
+                    Log.e(TAG_DOWNLOAD, "doInBackground: Lỗi tải file -> " + e.getMessage());
+                    return null;
+                }
+            }
+
+            @Override
+            protected void onPostExecute(byte[] bytes) {
+                super.onPostExecute(bytes);
+
+                if (bytes != null) {
+                    saveDownloadedBook(context, progressDialog, bytes, nameWithExtension, bookId);
+                } else {
+                    progressDialog.dismiss();
+                    Toast.makeText(context, "Không tải được file", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }.execute(bookUrl);
     }
 
-
-    //lỗi chỗ này, khong lưu về được
+    //lưu book
     private static void saveDownloadedBook(Context context, ProgressDialog progressDialog, byte[] bytes, String nameWithExtension, String bookId) {
         Log.d(TAG_DOWNLOAD, "onSuccess: Lưu sách đã tải xuống");
+
         try {
+            OutputStream outputStream;
 
-            File downloadsFolder = new File(Environment.getExternalStorageDirectory() + "/Download");
-            downloadsFolder.mkdir();
-            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: dowloadBookFile: "+downloadsFolder);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ dùng MediaStore
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, nameWithExtension);
+                values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+                values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
 
-            FileOutputStream outputStream = new FileOutputStream(downloadsFolder);
+                Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                outputStream = context.getContentResolver().openOutputStream(uri);
+            } else {
+                // Android 9 trở xuống
+                File downloadsFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (!downloadsFolder.exists()) {
+                    downloadsFolder.mkdirs();
+                }
+                File file = new File(downloadsFolder, nameWithExtension);
+                outputStream = new FileOutputStream(file);
+            }
+
+            // Ghi dữ liệu ra file
             outputStream.write(bytes);
+            outputStream.flush();
             outputStream.close();
-            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: outputStream: "+outputStream);
-            Toast.makeText(context, "Lưu vào thư mục", Toast.LENGTH_SHORT).show();
-            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: Lưu vào thư mục");
+
+            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: Lưu thành công -> " + nameWithExtension);
+            Toast.makeText(context, "Đã lưu vào thư mục Download", Toast.LENGTH_SHORT).show();
+
             progressDialog.dismiss();
 
             incrementBookDownloadCount(bookId);
-        }
-        catch (Exception e){
-            Log.d(TAG_DOWNLOAD, "saveDownloadedBook: Lưu vào thư mục không thành công do "+e.getMessage());
-            Toast.makeText(context, "Lưu vào thư mục không thành công do "+e.getMessage(), Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Log.e(TAG_DOWNLOAD, "saveDownloadedBook: Lỗi lưu file -> " + e.getMessage());
+            Toast.makeText(context, "Lỗi lưu file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             progressDialog.dismiss();
         }
     }
+
 
     //tăng số lượng tải sách
     private static void incrementBookDownloadCount(String bookId) {
